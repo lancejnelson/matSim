@@ -5,6 +5,7 @@ include("/Users/legoses/OneDrive - BYU-Idaho/codes/Crystal.jl")
 using .CrystalMethods: Crystal,getEnergy,writePOSCAR,CartesianToDirect!,DirectToCartesian
 using Printf
 using DelimitedFiles
+using Statistics
 
 struct DataSet
     crystals::Vector{Crystal}

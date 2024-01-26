@@ -6,7 +6,7 @@ using StaticArrays
 
 export Crystal,readStructuresIn,writeStructuresIn,CartesianToDirect!,DirectToCartesian,readVaspFolders,DataSet
 
-struct Crystal
+mutable struct Crystal
     title::String
     latpar::Float64
     lVecs:: SMatrix{3,3,Float64,9}
