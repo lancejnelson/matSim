@@ -27,7 +27,26 @@ struct Metrop
 end
 
 
-function LJ(crystal::Crystal,cutoff::Float64)
+function getTraining_Holdout_Sets(dset::DataSet,nStructures)
+
+#    training = []
+#    holdout = []
+#    for (idx,i) in enumerate(dset.crystals)
+#        if i.energyFP > 0.67
+#            append!(training,idx)
+#        else
+#            append!(holdout,idx)
+#        end
+#    end
+    training = sample(1:length(dset.crystals),nStructures,replace = false)
+    holdout = setdiff(1:length(dset.crystals),training)
+
+    trainingSet = DataSet(dset.crystals[training])
+    holdoutSet = DataSet(dset.crystals[holdout])
+    trainingSet, holdoutSet
+end
+
+function LJ(crystal::Crystal,cutoff::Float64;params = [1 1; 1 1; 1 1])
     CartesianToDirect!(crystal)
     ljvals = zeros(3,2)  #Specific to binary material.  Needs generalized to n-ary case.
     
@@ -52,11 +71,11 @@ function LJ(crystal::Crystal,cutoff::Float64)
                             # double counted at some point when we center on the other atom.  
                             # So we count it as half each time.
                             if all([i,j,k] .== 0 ) 
-                                ljvals[iNeighbor + iCenter - 1,1] +=  1/2 * 1/r^6
-                                ljvals[iNeighbor + iCenter - 1,2] +=  1/2 * 1/r^12
-                            else
-                                ljvals[iNeighbor + iCenter - 1,1] += 1/r^6
-                                ljvals[iNeighbor + iCenter - 1,2] += 1/r^12
+                                ljvals[iNeighbor + iCenter - 1,1] +=  4 * params[iNeighbor + iCenter - 1,1] * 1/2 * params[iNeighbor + iCenter - 1,2]^6/r^6
+                                ljvals[iNeighbor + iCenter - 1,2] +=  4 * params[iNeighbor + iCenter - 1,1] * 1/2 * params[iNeighbor + iCenter - 1,2]^12/r^12
+                            else 
+                                ljvals[iNeighbor + iCenter - 1,1] += 4 * params[iNeighbor + iCenter - 1,1] * params[iNeighbor + iCenter - 1,2]^6/r^6
+                                ljvals[iNeighbor + iCenter - 1,2] += 4 * params[iNeighbor + iCenter - 1,1] * params[iNeighbor + iCenter - 1,2]^12/r^12
                             end
                         end
                     end
@@ -68,7 +87,7 @@ function LJ(crystal::Crystal,cutoff::Float64)
 end
 
 function totalEnergy(crystal::Crystal,params)
-    energy = sum(4 * params[1,:] .* params[2,:] .^6 .* crystal.ljvals[1,:] - 4 * params[1,:] .* params[2,:] .^12 .* crystal.ljvals[2,:] )
+    energy = sum(-params[:,1] .* params[:,2] .^6 .* crystal.ljvals[:,1] + params[:,1] .* params[:,2] .^12 .* crystal.ljvals[:,2] )
     return energy
 end
 
@@ -83,7 +102,6 @@ end
 
 function findFit(data::DataSet,nDraws::Int, candSig:: Matrix{Float64},candSig_sig::Float64, μpriorParams:: Array{Float64,3},σpriorParams:: Vector{Float64}, muGuess::Matrix{Float64},sigmaGuess::Float64)
     nParams = size(candSig)
-    #fpenergies = [i.energyFP for i in data.crystals]
     mudraws = zeros(nDraws,nParams...)
     mudraws[1,:,:] .= muGuess
     sigmadraws = zeros(nDraws)
@@ -118,7 +136,7 @@ function getSamples(metrop::Metrop)
             drawsWithCand[j,k] = cand
             r = logpostμ(metrop.data,metrop.sigmadraws[i], drawsWithCand,(j,k),metrop.μpriorParams[j,k,:]) + log(pdf(Gamma(α_2,θ_2 ),metrop.mudraws[i,j,k])) - logpostμ(metrop.data,metrop.sigmadraws[i], metrop.mudraws[i,:,:],(j,k),metrop.μpriorParams[j,k,:]) - log(pdf(Gamma(α,θ),cand)) #Ratio between last draw with 
             unif = log(rand(Uniform(0,1)))  # Draw from a uniform.
-            if r >= 0 || (r < 0 && unif < r)  # Accept?
+            if r >= 0 || ((r < 0) & (unif < r))  # Accept?
                 metrop.mudraws[i,j,k] = cand   # Yes!
                 metrop.μaccept[j,k] += 1/metrop.nDraws
             end
@@ -136,7 +154,7 @@ function getSamples(metrop::Metrop)
         θ_2 = metrop.candSig_sig/cand
         r = logpostσ(metrop.data,cand, metrop.mudraws[i,:,:],metrop.σpriorParams) + log(pdf(Gamma(α_2,θ_2 ),metrop.sigmadraws[i])) - logpostσ(metrop.data,metrop.sigmadraws[i], metrop.mudraws[i,:,:],metrop.σpriorParams) - log(pdf(Gamma(α,θ),cand)) #Ratio between last draw with 
         unif = log(rand(Uniform(0,1)))  # Draw from a uniform.
-        if r >= 0 || (r < 0 && unif < r)  # Accept?
+        if r >= 0 || ((r < 0) & (unif < r))  # Accept?
             metrop.sigmadraws[i] = cand   # Yes!
             metrop.σaccept[1] += 1/metrop.nDraws
         end
@@ -148,22 +166,13 @@ end
 # Normal-Gamma on all parameters in LJ
 function logpostμ(data::DataSet,σ,μ,paramOfInterest,priorParameters)
     n = length(data.crystals)
-    #- (c-mu_c)^2/2/sigma_c^2
     α = priorParameters[1]
     β = priorParameters[2]
     x = μ[paramOfInterest...]
-#    println("------")
-#    println(paramOfInterest)
-#    println(x)
-#    println(log(x))
- #   println(σ)
-#    println([i.energyFP for i in data.crystals])
-#    println([totalEnergy(i,μ) for i in data.crystals])
-    thesum =  - 1/(2 * σ) * sum([(i.energyFP - totalEnergy(i,μ))^2   for i in data.crystals]) + (α - 1) * log(x) - β * x
+    thesum =  - 1/(2 * σ^2) * sum([(i.energyFP - totalEnergy(i,μ))^2   for i in data.crystals]) + (α - 1) * log(x) - β * x
     return thesum
 
 
-    return lognorm(data,σ, totalEnergy(μ)) + lognorm(μ[paramOfInterest],priorParameters...)
 
 
 end
@@ -174,10 +183,8 @@ function logpostσ(data::DataSet,σ,μ,priorParameters)
     α = priorParameters[1]
     β = priorParameters[2]
     #- (c-mu_c)^2/2/sigma_c^2
-    thesum =  -n/2 * log(σ) - 1/(2 * σ) * sum([(i.energyFP - totalEnergy(i,μ))^2   for i in data.crystals])+ (α - 1) * log(σ) - β * σ
+    thesum =  -n/2 * log(σ^2 * 2 * pi) - 1/(2 * σ^2) * sum([(i.energyFP - totalEnergy(i,μ))^2   for i in data.crystals])+ (α - 1) * log(σ) - β * σ
     return thesum
-
-    return lognorm(data,σ, totalEnergy(μ)) + lognorm(μ[paramOfInterest],priorParameters...)
 
 
 end
