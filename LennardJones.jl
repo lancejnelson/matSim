@@ -66,7 +66,7 @@ function LJ(crystal::Crystal,cutoff::Float64;params = [1 1; 1 1; 1 1])
                         newAtom = neighboratom + [i, j, k]
                         newCart = DirectToCartesian(crystal.latpar * crystal.lVecs,newAtom)
                         r = norm(newCart - centerAtomC) 
-                        if r < cutoff && !isapprox(r,0)
+                        if r < cutoff && !isapprox(r,0,atol = 1e-3)
                             #If the neighbor atom is inside the unit cell, then its going to be
                             # double counted at some point when we center on the other atom.  
                             # So we count it as half each time.
