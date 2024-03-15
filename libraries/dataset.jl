@@ -1,16 +1,21 @@
-module dataset
 
 
-include("/Users/legoses/OneDrive - BYU-Idaho/codes/Crystal.jl")
-using .CrystalMethods: Crystal,getEnergy,writePOSCAR,CartesianToDirect!,DirectToCartesian
-using Printf
-using DelimitedFiles
-using Statistics
+#include("/Users/legoses/OneDrive - BYU-Idaho/codes/Crystal.jl")
+#using ..CrystalMethods: Crystal,getEnergy,writePOSCAR,CartesianToDirect!,DirectToCartesian
+#using Printf
+#using DelimitedFiles
+#using Statistics
 
-struct DataSet
-    crystals::Vector{Crystal}
+
+function getTraining_Holdout_Sets(dset::DataSet,nStructures)
+
+    training = sample(1:length(dset.crystals),nStructures,replace = false)
+    holdout = setdiff(1:length(dset.crystals),training)
+
+    trainingSet = DataSet(dset.crystals[training])
+    holdoutSet = DataSet(dset.crystals[holdout])
+    trainingSet, holdoutSet
 end
-
 
 function readStructuresIn(folder::String,file::String)
     cd(folder)
@@ -88,4 +93,3 @@ function readVaspFolders(folder::String,file::String;poscar = "CONTCAR",outcar =
 
 end
 
-end

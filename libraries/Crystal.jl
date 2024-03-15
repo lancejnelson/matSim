@@ -1,34 +1,55 @@
-module CrystalMethods
-
-using Printf
-using DelimitedFiles
-using StaticArrays
-
-export Crystal,readStructuresIn,writeStructuresIn,CartesianToDirect!,DirectToCartesian,readVaspFolders,DataSet
-
-mutable struct Crystal
-    title::String
-    latpar::Float64
-    lVecs:: SMatrix{3,3,Float64,9}
-    nType:: Vector{Int64} #Number of each type of atom 
-    aType:: Vector{Int64} # Integers representing the type for each basis atom
-    nAtoms::Int64  # Total number of atoms in the unit cell
-    coordSys::Vector{String} # 'D' for Direct or 'C' for cartesian
-    atomicBasis:: Vector{Vector{SVector{3,Float64}}}  # List of all the atomic basis vector separated by type  
-    energyFP:: Float64  # First principles energy
-    energyPred:: Float64 # Model energy
-    order::Int64 # binary, ternary, etc.
-    ljvals:: Matrix{Float64}
-end
-
-#struct DataSet
-#    crystals::Vector{Crystal}
-#end
-
 
 
 Crystal(folder::String,file::String; energyFP = 0, energyPred = 0) = fromPOSCAR(folder,file, energyFP = 0, energyPred = 0)
 Crystal(list::Vector{String}; energyFP = 0, energyPred = 0) = fromPOSCAR(list, energyFP = energyFP, energyPred = energyPred)
+
+
+function getPartitions(atoms::Vector{Vector{Float64}},nAtoms::Vector{Int64})
+    if length(atoms) != sum(nAtoms)
+        println("Number of atoms doesn't match")
+        return
+    end
+    parts = prepend!(cumsum(nAtoms),0)
+    return [atoms[parts[i]+1:parts[i+1]] for i=1:length(parts)-1]
+end
+
+function buildRandom(lPar:: Float64, lVecs::Matrix{Float64},nAtoms::Vector{Int64},cutoff::Float64)
+
+    totalAtoms = sum(nAtoms)
+    order = length(nAtoms)
+    aType = hcat([ [n for i=1:nAtoms[n]]' for n=1:length(nAtoms)]...)'
+
+    atoms = [zeros(Float64,3) for i=1:totalAtoms]  
+
+    nTotal = 0
+    counter = 0
+    while nTotal < totalAtoms
+        counter += 1
+        if counter > 5000
+            println("Having trouble putting that many atoms into this simulation cell.")
+            println("So far I've only place $nTotal atoms." )
+            return
+        end
+        newAtomCart = lPar * lVecs * rand(3)
+
+        newOK = true
+        for i=1:nTotal
+            if norm(newAtomCart - atoms[i]) < cutoff
+                newOK = false
+            end
+            if !newOK
+                break
+            end
+        end
+        if newOK
+            nTotal += 1
+            atoms[nTotal] .= newAtomCart
+        end
+    end
+    atomicBasis = getPartitions(atoms,nAtoms)
+    return Crystal("Random Locations",lPar,lVecs,nAtoms,aType,totalAtoms,["C"], atomicBasis,0.0,0.0,order,zeros(3,2))
+end
+
 
 function fromPOSCAR(folder::String,file::String;energyFP = 0, energyPred = 0)
 
@@ -56,14 +77,15 @@ function fromPOSCAR(folder::String,file::String;energyFP = 0, energyPred = 0)
         println("No atom types listed in the POSCAR")
         ["?" for x in pos[(counter + 2):end]]
     end
-    if length(nBasis) == 3
-        partitionIndices = [[1,nBasis[1]],[nBasis[1] + 1,nBasis[1] + nBasis[2]],[nBasis[1] + nBasis[2]+1,sum(nBasis)]] 
-    elseif length(nBasis) == 2
-        partitionIndices = [[1,nBasis[1]],[nBasis[1] + 1,sum(nBasis)]]
-    else
-        partitionIndices = [[1,nBasis[1]]]
-    end
-    atomicBasis = [allBasis[n[1]:n[2]] for n in partitionIndices] # Partition the list according to atom type.
+    atomicBasis = getPartitions(allBasis,nBasis)
+#    if length(nBasis) == 3
+#        partitionIndices = [[1,nBasis[1]],[nBasis[1] + 1,nBasis[1] + nBasis[2]],[nBasis[1] + nBasis[2]+1,sum(nBasis)]] 
+#    elseif length(nBasis) == 2
+#        partitionIndices = [[1,nBasis[1]],[nBasis[1] + 1,sum(nBasis)]]
+#    else
+#        partitionIndices = [[1,nBasis[1]]]
+#    end
+#    atomicBasis = [allBasis[n[1]:n[2]] for n in partitionIndices] # Partition the list according to atom type.
     order = length(nBasis)
     nAtoms = sum(nBasis)
     return Crystal(title, latpar,lVecs,nBasis,aType,nAtoms,coordSys,atomicBasis,energyFP,energyPred,order,zeros(3,2))  # Create new crystal object.
@@ -121,35 +143,12 @@ function fromPOSCAR(lines::Vector{String};energyFP = NaN,energyPred = NaN)
 
 end
 
-#function readStructuresIn(folder::String,file::String)
-#    cd(folder)
-#    file = open(file,"r")
-#    pos = readlines(file)
-#
-#    data = Vector{Crystal}()
-#    for (idx,line) in enumerate(pos)
-#
-#        if occursin("#--",line)
-#            nAtoms = sum([parse(Int64,x) for x in split(pos[idx + 6])])
-#            startpoint = idx + 1
-#            theend = idx + 7 + nAtoms
-#            thisCrystal = Crystal(pos[startpoint:theend],energyFP = parse(Float64,pos[theend + 2 ]))
-#            push!(data,thisCrystal)
-#        end
-#    end
-#    return DataSet(data)
-#end
+
+
 function DirectToCartesian!(crystal::Crystal)
     if crystal.coordSys[1] == "D"
         println("Converting to cartesian")
         crystal.atomicBasis .= [[crystal.lVecs * i for i in j] for j in crystal.atomicBasis ]
-
-#        for (i,aType) in enumerate(crystal.basis)
-#            for (j,atom) in enumerate(aType)
-#                crystal.basis[i][j] =  crystal.lVecs * atom
-#            end
-#
-#        end
         crystal.coordSys[1] = "C"
     else
         println("Already in Cartesian coordinates")
@@ -160,23 +159,18 @@ function CartesianToDirect!(crystal::Crystal)
     if crystal.coordSys[1] == "C"
         println("Converting to direct")
         crystal.atomicBasis .= [[inv(crystal.lVecs) * i for i in j] for j in crystal.atomicBasis ]
-#        for (i,aType) in enumerate(crystal.basis)
-#            for (j,atom) in enumerate(aType)
-#                crystal.basis[i][j] =  inv(crystal.lVecs) * atom
-#            end
-#
-#        end
+
         crystal.coordSys[1] = "D"
     else
         println("Already in Cartesian coordinates")
     end
 end
 
-function DirectToCartesian(lVecs::SMatrix{3,3,Float64,9},atom:: SVector{3,Float64})
+function DirectToCartesian(lVecs::Matrix{Float64},atom:: Vector{Float64})
     return lVecs * atom
 end
 
-function CartesianToDirect(lVecs::SMatrix{3,3,Float64,9},atom:: SVector{3,Float64})
+function CartesianToDirect(lVecs::Matrix{Float64},atom:: Vector{Float64})
     return inv(lVecs) * atom
 end
 
@@ -193,7 +187,6 @@ end
 
 
 function writePOSCAR(crystal::Crystal,fName::String,openCode::String = "w")
-    println(openCode)
     open(fName,openCode) do f
         write(f,crystal.title,'\n')
         writedlm(f,crystal.latpar',' ')
@@ -225,55 +218,3 @@ function getEnergy(filePath::String)
 
 end
 
-#function writeStructuresIn(path::String, structures::DataSet)
-#    io = open(path, "w")
-#    for crystal in structures.crystals
-#        write(io,"#-----------------------\n")
-#        write(io,crystal.title * "\n")
-#        write(io,string(crystal.latpar) * "\n")
-#        for lv in eachcol(crystal.lVecs)
-#            write(io,join(lv," ") * "\n")
-#        end
-#        write(io,join(crystal.nType," ") * "\n")
-#        write(io,crystal.coordSys[1] * "\n")
-#        for typ in crystal.atomicBasis
-#            for atom in typ
-#                write(io,join(atom," ") * "\n")
-#            end
-#        end
-#        write(io,"#Energy:\n")
-#        write(io,string(crystal.energyFP) * "\n")
-#    end
-#    close(io)
-#    
-#end
-
-#function readVaspFolders(folder::String,file::String;poscar = "CONTCAR",outcar = "OUTCAR")
-#
-#    for obj in readdir(folder,join = true)
-#
-#        if isdir(obj)
-#            println(obj)
-#            poscarPresent = isfile(joinpath(obj,poscar))
-#            outcarPresent = isfile(joinpath(obj,outcar)) 
-#            if poscarPresent && outcarPresent
-#                crystal = Crystal(obj,poscar,energyFP = getEnergy(joinpath(obj,outcar)))
-#                writePOSCAR(crystal,joinpath(folder,file),"a")
-#                open(joinpath(folder,file), "a") do f
-#                    write(f,"Energy:","\n")
-#                    writedlm(f,crystal.energyFP)
-#                    write(f,"#--------------------","\n")
-#                end
-#                
-#                
-#            else
-#                @printf("Didn't find one of the necessary files. POSCAR: %s OUTCAR: %s Skipping this dir: %s\n",poscarPresent ? "true" : "false",outcarPresent ? "true" : "false", obj)
-#                #print(obj)
-#            end
-#        end
-#    end
-#
-#
-#end
-
-end
